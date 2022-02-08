@@ -2701,7 +2701,16 @@ class TestSparseArray(DiskTestCase):
             self.assertEqual(a_nonempty[0], (0, 49))
             self.assertEqual(a_nonempty[1], (-100.0, 100.0))
 
-    def test_sparse_string_domain(self, sparse_cell_order):
+    @pytest.mark.parametrize(
+        "coords, expected_ned, allows_duplicates",
+        [
+            ([b"aa", b"bbb", b"c", b"dddd"], [b"aa", b"dddd"], False),
+            ([b"", b"", b"", b""], [b"", b""], True),
+        ],
+    )
+    def test_sparse_string_domain(
+        self, coords, expected_ned, allows_duplicates, sparse_cell_order
+    ):
         path = self.path("sparse_string_domain")
         dom = tiledb.Domain(tiledb.Dim(name="d", domain=(None, None), dtype=np.bytes_))
         att = tiledb.Attr(name="a", dtype=np.int64)
@@ -2710,12 +2719,12 @@ class TestSparseArray(DiskTestCase):
             attrs=(att,),
             sparse=True,
             cell_order=sparse_cell_order,
+            allows_duplicates=allows_duplicates,
             capacity=10000,
         )
         tiledb.SparseArray.create(path, schema)
 
         data = [1, 2, 3, 4]
-        coords = [b"aa", b"bbb", b"c", b"dddd"]
 
         with tiledb.open(path, "w") as A:
             A[coords] = data
@@ -2725,7 +2734,8 @@ class TestSparseArray(DiskTestCase):
             res = A[ned[0] : ned[1]]
             assert_array_equal(res["a"], data)
             self.assertEqual(set(res["d"]), set(coords))
-            self.assertEqual(A.nonempty_domain(), ((b"aa", b"dddd"),))
+            # self.assertEqual(A.nonempty_domain(), ((b"aa", b"dddd"),))
+            self.assertEqual(A.nonempty_domain(), ((tuple(expected_ned)),))
 
     def test_sparse_string_domain2(self, sparse_cell_order):
         path = self.path("sparse_string_domain2")
