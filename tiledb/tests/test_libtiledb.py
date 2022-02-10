@@ -717,17 +717,15 @@ class ArraySchemaTest(DiskTestCase):
         a2 = tiledb.Attr("a2", filters=filter_list, dtype="float32")
 
         off_filters_pylist = [tiledb.libtiledb.ZstdFilter(level=10)]
-        off_filters = tiledb.libtiledb.FilterList(
-            filters=off_filters_pylist, chunksize=2048
-        )
+        off_filters = tiledb.FilterList(filters=off_filters_pylist, chunksize=2048)
 
         coords_filters_pylist = [tiledb.libtiledb.Bzip2Filter(level=5)]
-        coords_filters = tiledb.libtiledb.FilterList(
+        coords_filters = tiledb.FilterList(
             filters=coords_filters_pylist, chunksize=4096
         )
 
         validity_filters_pylist = [tiledb.libtiledb.GzipFilter(level=9)]
-        validity_filters = tiledb.libtiledb.FilterList(
+        validity_filters = tiledb.FilterList(
             filters=validity_filters_pylist, chunksize=1024
         )
 
@@ -3010,9 +3008,7 @@ class TestFilterTest(unittest.TestCase):
         self.assertIsInstance(bw_filter, tiledb.libtiledb.Filter)
         self.assertEqual(bw_filter.window, 10)
 
-        filter_list = tiledb.libtiledb.FilterList(
-            [gzip_filter, bw_filter], chunksize=1024
-        )
+        filter_list = tiledb.FilterList([gzip_filter, bw_filter], chunksize=1024)
         self.assertEqual(filter_list.chunksize, 1024)
         self.assertEqual(len(filter_list), 2)
         self.assertEqual(filter_list[0].level, gzip_filter.level)
