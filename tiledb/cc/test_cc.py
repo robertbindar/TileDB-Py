@@ -220,7 +220,7 @@ def test_filter():
     fl = lt.FilterList(ctx)
 
     fl.add_filter(lt.Filter(ctx, lt.FilterType.ZSTD))
-    assert fl.filter(0).type == lt.FilterType.ZSTD
+    assert fl[0].type == lt.FilterType.ZSTD
     assert len(fl) == 1
 
     bzip_filter = lt.Filter(ctx, lt.FilterType.BZIP2)
@@ -228,11 +228,11 @@ def test_filter():
     assert bzip_filter.get_option(ctx, lt.FilterOption.COMPRESSION_LEVEL) == 2
 
     fl.add_filter(bzip_filter)
-    assert fl.filter(1).type == lt.FilterType.BZIP2
+    assert fl[1].type == lt.FilterType.BZIP2
     assert len(fl) == 2
 
-    fl.max_chunk_size = 100000
-    assert fl.max_chunk_size == 100000
+    fl.chunksize = 100000
+    assert fl.chunksize == 100000
 
 
 def test_schema_dump(capfd):

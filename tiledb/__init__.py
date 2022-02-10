@@ -1,4 +1,3 @@
-import ctypes
 import os
 import sys
 
@@ -33,6 +32,8 @@ except:
         # Otherwise try loading by name only.
         ctypes.CDLL(lib_name)
 
+from .filter import FilterList
+
 from .ctx import default_ctx, scope_ctx
 from .libtiledb import (
     Array,
@@ -46,7 +47,7 @@ from .libtiledb import (
     VFS,
     FileIO,
     Filter,
-    FilterList,
+    #FilterList,
     NoOpFilter,
     GzipFilter,
     ZstdFilter,
@@ -99,8 +100,6 @@ from .query_condition import QueryCondition
 from .schema import schema_like
 
 from .schema_evolution import ArraySchemaEvolution
-
-from .typing import TileDBSequence, TileDBDictSequence
 
 # TODO restricted imports
 from .dataframe_ import from_csv, from_pandas, open_dataframe

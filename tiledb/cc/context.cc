@@ -14,6 +14,7 @@ void init_context(py::module &m) {
   py::class_<Context>(m, "Context")
       .def(py::init())
       .def(py::init<Config>())
+      .def(py::init<py::capsule, bool>())
 
       .def_property_readonly("config", &Context::config)
       .def("set_tag", &Context::set_tag)
