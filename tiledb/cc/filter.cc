@@ -15,7 +15,8 @@ namespace py = pybind11;
 
 void init_filter(py::module &m) {
   py::class_<Filter>(m, "Filter")
-      .def(py::init<const Context &, tiledb_filter_type_t>())
+      .def(py::init<const Context &, tiledb_filter_type_t>(),
+           py::keep_alive<1, 2>())
 
       .def_property_readonly("type", &Filter::filter_type)
 
@@ -46,11 +47,11 @@ void init_filter(py::module &m) {
              return py::capsule(filterlist.ptr().get(), "fl", nullptr);
            })
 
-      .def_property("chunksize", &FilterList::max_chunk_size,
+      .def_property("_max_chunk_size", &FilterList::max_chunk_size,
                     &FilterList::set_max_chunk_size)
 
       .def("__len__", &FilterList::nfilters)
-      .def("__getitem__", &FilterList::filter)
+      .def("filter", &FilterList::filter)
 
       .def("add_filter", &FilterList::add_filter);
 }

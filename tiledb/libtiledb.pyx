@@ -12,8 +12,6 @@ import sys
 import warnings
 from collections import OrderedDict
 
-from tiledb.cc import Context
-
 from .array import DenseArray, SparseArray
 from .ctx import default_ctx
 from .filter import FilterList
@@ -1373,677 +1371,677 @@ cdef unicode _tiledb_layout_string(tiledb_layout_t order):
 
     return tiledb_order_to_string[order]
 
-cdef class Filter(object):
-    """Base class for all TileDB filters."""
-
-    def __cinit__(self):
-        self.ptr = NULL
-
-    def __dealloc__(self):
-        if self.ptr != NULL:
-            tiledb_filter_free(&self.ptr)
-
-    def __init__(self, tiledb_filter_type_t filter_type, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        cdef tiledb_ctx_t* ctx_ptr = ctx.ptr
-        cdef tiledb_filter_t* filter_ptr = NULL
-        cdef int rc = TILEDB_OK
-        rc = tiledb_filter_alloc(ctx_ptr, filter_type, &filter_ptr)
-        if rc != TILEDB_OK:
-            _raise_ctx_err(ctx_ptr, rc)
-        self.ctx = ctx
-        self.ptr = filter_ptr
-        return
-
-    def __repr__(self):
-        output = io.StringIO()
-        output.write(f"{type(self).__name__}(")
-        if hasattr(self, '_attrs_'):
-            for f in self._attrs_():
-                a = getattr(self, f)
-                output.write(f"{f}={a}")
-        output.write(")")
-        return output.getvalue()
-
-    def _repr_html_(self):
-        output = io.StringIO()
-
-        output.write("<section>\n")
-        output.write("<table>\n")
-
-        output.write("<tr>\n")
-        output.write("<th></th>\n")
-        if hasattr(self, '_attrs_'):
-            for f in self._attrs_():
-                output.write(f"<th>{f}</th>")
-        output.write("</tr>\n")
-
-        output.write("<tr>\n")
-        output.write(f"<td>{type(self).__name__}</td>\n")
-        if hasattr(self, '_attrs_'):
-            for f in self._attrs_():
-                output.write(f"<td>{getattr(self, f)}</td>")
-        output.write("</tr>\n")
-
-        output.write("</table>\n")
-        output.write("</section>\n")
-
-        return output.getvalue()
-
-    def __eq__(self, other):
-        if type(self) != type(other):
-            return False
-        for f in self._attrs_():
-           left = getattr(self, f)
-           right = getattr(other, f)
-           if left != right:
-               return False
-        return True
-
-cdef class CompressionFilter(Filter):
-    """
-    Base class for filters performing compression.
-
-    All compression filters support a compression level option, although
-    some (such as RLE) ignore it.
-
-    **Example:**
-
-    >>> import tiledb, numpy as np, tempfile
-    >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
-    ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
-    ...                      filters=tiledb.FilterList([tiledb.GzipFilter(level=10)]))
-    ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
-    ...     tiledb.DenseArray.create(tmp + "/array", schema)
-
-    """
-
-    def __init__(self, tiledb_filter_type_t filter_type, level, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        super().__init__(filter_type, ctx)
-        if level is None:
-            return
-        cdef tiledb_ctx_t* ctx_ptr = ctx.ptr
-        cdef int clevel = int(level)
-        cdef int rc = TILEDB_OK
-        rc = tiledb_filter_set_option(ctx_ptr, self.ptr, TILEDB_COMPRESSION_LEVEL, &clevel)
-        if rc != TILEDB_OK:
-            _raise_ctx_err(ctx_ptr, rc)
-
-    @property
-    def level(self):
-        """The compression level setting for the filter.
-
-        Every compressor interprets this value differently (some ignore it, such as RLE).
-
-        :return: compression level
-        :rtype: int
-
-        """
-        cdef int32_t rc = TILEDB_OK
-        cdef tiledb_filter_option_t option = TILEDB_COMPRESSION_LEVEL
-        cdef int32_t level = -1
-
-        rc = tiledb_filter_get_option(self.ctx.ptr, self.ptr, option, &level)
-        if rc != TILEDB_OK:
-            _raise_ctx_err(self.ctx.ptr, rc)
-        return level
-
-
-cdef class NoOpFilter(Filter):
-    """A filter that does nothing."""
-
-    @staticmethod
-    cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        assert(filter_ptr != NULL)
-        cdef NoOpFilter filter_obj = NoOpFilter.__new__(NoOpFilter)
-        filter_obj.ctx = ctx
-        # need to cast away the const
-        filter_obj.ptr = <tiledb_filter_t*> filter_ptr
-        return filter_obj
-
-    def __init__(self, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        super().__init__(TILEDB_FILTER_NONE, ctx=ctx)
-
-    def _attrs_(self):
-        return {}
-
-cdef class GzipFilter(CompressionFilter):
-    """
-    Filter that compresses using gzip.
-
-    :param ctx: TileDB Ctx
-    :type ctx: tiledb.Ctx
-    :param level: (default None) If not None set the compressor level
-    :type level: int
-
-    **Example:**
-
-    >>> import tiledb, numpy as np, tempfile
-    >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
-    ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
-    ...                      filters=tiledb.FilterList([tiledb.GzipFilter()]))
-    ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
-    ...     tiledb.DenseArray.create(tmp + "/array", schema)
-
-    """
-
-    @staticmethod
-    cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        assert(filter_ptr != NULL)
-        cdef GzipFilter filter_obj = GzipFilter.__new__(GzipFilter)
-        filter_obj.ctx = ctx
-        # need to cast away the const
-        filter_obj.ptr = <tiledb_filter_t*> filter_ptr
-        return filter_obj
-
-    def __init__(self, level=None, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        super().__init__(TILEDB_FILTER_GZIP, level, ctx=ctx)
-
-    def _attrs_(self):
-        return {'level': self.level}
-
-cdef class ZstdFilter(CompressionFilter):
-    """
-    Filter that compresses using zstd.
-
-    :param ctx: TileDB Ctx
-    :type ctx: tiledb.Ctx
-    :param level: (default None) If not None set the compressor level
-    :type level: int
-
-    **Example:**
-
-    >>> import tiledb, numpy as np, tempfile
-    >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
-    ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
-    ...                      filters=tiledb.FilterList([tiledb.ZstdFilter()]))
-    ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
-    ...     tiledb.DenseArray.create(tmp + "/array", schema)
-
-    """
-
-    @staticmethod
-    cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        assert(filter_ptr != NULL)
-        cdef ZstdFilter filter_obj = ZstdFilter.__new__(ZstdFilter)
-        filter_obj.ctx = ctx
-        # need to cast away the const
-        filter_obj.ptr = <tiledb_filter_t*> filter_ptr
-        return filter_obj
-
-    def __init__(self, level=None, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        super().__init__(TILEDB_FILTER_ZSTD, level, ctx=ctx)
-
-    def _attrs_(self):
-        return {'level': self.level}
-
-cdef class LZ4Filter(CompressionFilter):
-    """
-    Filter that compresses using lz4.
-
-    :param ctx: TileDB Ctx
-    :type ctx: tiledb.Ctx
-    :param level: (default None) If not None set the compressor level
-    :type level: int
-
-    **Example:**
-
-    >>> import tiledb, numpy as np, tempfile
-    >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
-    ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
-    ...                      filters=tiledb.FilterList([tiledb.LZ4Filter()]))
-    ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
-    ...     tiledb.DenseArray.create(tmp + "/array", schema)
-
-    """
-
-    @staticmethod
-    cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        assert(filter_ptr != NULL)
-        cdef LZ4Filter filter_obj = LZ4Filter.__new__(LZ4Filter)
-        filter_obj.ctx = ctx
-        # need to cast away the const
-        filter_obj.ptr = <tiledb_filter_t*> filter_ptr
-        return filter_obj
-
-    def __init__(self, level=None, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        super().__init__(TILEDB_FILTER_LZ4, level, ctx)
-
-    def _attrs_(self):
-        return {'level': self.level}
-
-cdef class Bzip2Filter(CompressionFilter):
-    """
-    Filter that compresses using bzip2.
-
-    :param level: (default None) If not None set the compressor level
-    :type level: int
-
-    **Example:**
-
-    >>> import tiledb, numpy as np, tempfile
-    >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
-    ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
-    ...                      filters=tiledb.FilterList([tiledb.Bzip2Filter()]))
-    ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
-    ...     tiledb.DenseArray.create(tmp + "/array", schema)
-
-    """
-
-    @staticmethod
-    cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        assert(filter_ptr != NULL)
-        cdef Bzip2Filter filter_obj = Bzip2Filter.__new__(Bzip2Filter)
-        filter_obj.ctx = ctx
-        # need to cast away the const
-        filter_obj.ptr = <tiledb_filter_t*> filter_ptr
-        return filter_obj
-
-    def __init__(self, level=None, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        super().__init__(TILEDB_FILTER_BZIP2, level, ctx=ctx)
-
-    def _attrs_(self):
-        return {'level': self.level}
-
-cdef class RleFilter(CompressionFilter):
-    """
-    Filter that compresses using run-length encoding (RLE).
-
-    **Example:**
-
-    >>> import tiledb, numpy as np, tempfile
-    >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
-    ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
-    ...                      filters=tiledb.FilterList([tiledb.RleFilter()]))
-    ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
-    ...     tiledb.DenseArray.create(tmp + "/array", schema)
-
-    """
-
-    @staticmethod
-    cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        assert(filter_ptr != NULL)
-        cdef RleFilter filter_obj = RleFilter.__new__(RleFilter)
-        filter_obj.ctx = ctx
-        # need to cast away the const
-        filter_obj.ptr = <tiledb_filter_t*> filter_ptr
-        return filter_obj
-
-    def __init__(self, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        super().__init__(TILEDB_FILTER_RLE, None, ctx=ctx)
-
-    def _attrs_(self):
-        return {}
-
-cdef class DoubleDeltaFilter(CompressionFilter):
-    """
-    Filter that performs double-delta encoding.
-
-    **Example:**
-
-    >>> import tiledb, numpy as np, tempfile
-    >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
-    ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
-    ...                      filters=tiledb.FilterList([tiledb.DoubleDeltaFilter()]))
-    ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
-    ...     tiledb.DenseArray.create(tmp + "/array", schema)
-
-    """
-
-    @staticmethod
-    cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        assert(filter_ptr != NULL)
-        cdef DoubleDeltaFilter filter_obj = DoubleDeltaFilter.__new__(DoubleDeltaFilter)
-        filter_obj.ctx = ctx
-        # need to cast away the const
-        filter_obj.ptr = <tiledb_filter_t*> filter_ptr
-        return filter_obj
-
-    def __init__(self, Ctx ctx=None):
-        if not ctx:
-            ctx = None
-        super().__init__(TILEDB_FILTER_DOUBLE_DELTA, None, ctx)
-
-    def _attrs_(self):
-        return {}
-
-cdef class BitShuffleFilter(Filter):
-    """
-    Filter that performs a bit shuffle transformation.
-
-    **Example:**
-
-    >>> import tiledb, numpy as np, tempfile
-    >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
-    ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
-    ...                      filters=tiledb.FilterList([tiledb.BitShuffleFilter()]))
-    ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
-    ...     tiledb.DenseArray.create(tmp + "/array", schema)
-
-    """
-
-    @staticmethod
-    cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        assert(filter_ptr != NULL)
-        cdef BitShuffleFilter filter_obj = BitShuffleFilter.__new__(BitShuffleFilter)
-        filter_obj.ctx = ctx
-        # need to cast away the const
-        filter_obj.ptr = <tiledb_filter_t*> filter_ptr
-        return filter_obj
-
-    def __init__(self, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        super().__init__(TILEDB_FILTER_BITSHUFFLE, ctx=ctx)
-
-    def _attrs_(self):
-        return {}
-
-cdef class ByteShuffleFilter(Filter):
-    """
-    Filter that performs a byte shuffle transformation.
-
-    **Example:**
-
-    >>> import tiledb, numpy as np, tempfile
-    >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
-    ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
-    ...                      filters=tiledb.FilterList([tiledb.ByteShuffleFilter()]))
-    ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
-    ...     tiledb.DenseArray.create(tmp + "/array", schema)
-
-    """
-
-    @staticmethod
-    cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        assert(filter_ptr != NULL)
-        cdef ByteShuffleFilter filter_obj = ByteShuffleFilter.__new__(ByteShuffleFilter)
-        filter_obj.ctx = ctx
-        # need to cast away the const
-        filter_obj.ptr = <tiledb_filter_t*> filter_ptr
-        return filter_obj
-
-    def __init__(self, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        super().__init__(TILEDB_FILTER_BYTESHUFFLE, ctx=ctx)
-
-    def _attrs_(self):
-        return {}
-
-cdef class BitWidthReductionFilter(Filter):
-    """Filter that performs bit-width reduction.
-
-     :param ctx: A TileDB Context
-     :type ctx: tiledb.Ctx
-     :param window: (default None) max window size for the filter
-     :type window: int
-
-    **Example:**
-
-    >>> import tiledb, numpy as np, tempfile
-    >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
-    ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
-    ...                      filters=tiledb.FilterList([tiledb.BitWidthReductionFilter()]))
-    ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
-    ...     tiledb.DenseArray.create(tmp + "/array", schema)
-
-    """
-
-    @staticmethod
-    cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        assert(filter_ptr != NULL)
-        cdef BitWidthReductionFilter filter_obj = BitWidthReductionFilter.__new__(BitWidthReductionFilter)
-        filter_obj.ctx = ctx
-        # need to cast away the const
-        filter_obj.ptr = <tiledb_filter_t*> filter_ptr
-        return filter_obj
-
-    def __init__(self, window=None, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        super().__init__(TILEDB_FILTER_BIT_WIDTH_REDUCTION, ctx)
-        if window is None:
-            return
-        cdef tiledb_ctx_t* ctx_ptr = ctx.ptr
-        cdef unsigned int cwindow = window
-        cdef int rc = TILEDB_OK
-        rc = tiledb_filter_set_option(ctx_ptr, self.ptr, TILEDB_BIT_WIDTH_MAX_WINDOW, &cwindow)
-        if rc != TILEDB_OK:
-            _raise_ctx_err(ctx_ptr, rc)
-
-    def _attrs_(self):
-        return {'window': self.window}
-
-    @property
-    def window(self):
-        """
-        :return: The maximum window size used for the filter
-        :rtype: int
-
-        """
-        cdef tiledb_ctx_t* ctx_ptr = self.ctx.ptr
-        cdef tiledb_filter_t* filter_ptr = self.ptr
-        cdef unsigned int cwindow = 0
-        cdef int rc = TILEDB_OK
-        rc = tiledb_filter_get_option(ctx_ptr, filter_ptr, TILEDB_BIT_WIDTH_MAX_WINDOW, &cwindow)
-        if rc != TILEDB_OK:
-            _raise_ctx_err(ctx_ptr, rc)
-        return int(cwindow)
-
-
-cdef class PositiveDeltaFilter(Filter):
-    """
-    Filter that performs positive-delta encoding.
-
-    :param ctx: A TileDB Context
-    :type ctx: tiledb.Ctx
-    :param window: (default None) the max window for the filter
-    :type window: int
-
-    **Example:**
-
-    >>> import tiledb, numpy as np, tempfile
-    >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
-    ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
-    ...                      filters=tiledb.FilterList([tiledb.PositiveDeltaFilter()]))
-    ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
-    ...     tiledb.DenseArray.create(tmp + "/array", schema)
-
-    """
-
-    @staticmethod
-    cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        assert(filter_ptr != NULL)
-        cdef PositiveDeltaFilter filter_obj = PositiveDeltaFilter.__new__(PositiveDeltaFilter)
-        filter_obj.ctx = ctx
-        # need to cast away the const
-        filter_obj.ptr = <tiledb_filter_t*> filter_ptr
-        return filter_obj
-
-    def __init__(self, window=None, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        super().__init__(TILEDB_FILTER_POSITIVE_DELTA, ctx=ctx)
-        if window is None:
-            return
-        cdef tiledb_ctx_t* ctx_ptr = ctx.ptr
-        cdef unsigned int cwindow = window
-        cdef int rc = TILEDB_OK
-        rc = tiledb_filter_set_option(ctx_ptr, self.ptr, TILEDB_POSITIVE_DELTA_MAX_WINDOW, &cwindow)
-        if rc != TILEDB_OK:
-            _raise_ctx_err(ctx_ptr, rc)
-
-    def _attrs_(self):
-        return {'window': self.window}
-
-    @property
-    def window(self):
-        """
-        :return: The maximum window size used for the filter
-        :rtype: int
-
-        """
-        cdef tiledb_ctx_t* ctx_ptr = self.ctx.ptr
-        cdef tiledb_filter_t* filter_ptr = self.ptr
-        cdef unsigned int cwindow = 0
-        cdef int rc = TILEDB_OK
-        rc = tiledb_filter_get_option(ctx_ptr, filter_ptr, TILEDB_POSITIVE_DELTA_MAX_WINDOW, &cwindow)
-        if rc != TILEDB_OK:
-            _raise_ctx_err(ctx_ptr, rc)
-        return int(cwindow)
-
-cdef class ChecksumMD5Filter(Filter):
-    """
-    MD5 checksum filter.
-
-    **Example:**
-
-    >>> import tiledb, numpy as np, tempfile
-    >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
-    ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
-    ...                      filters=tiledb.FilterList([tiledb.ChecksumMD5Filter()]))
-    ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
-    ...     tiledb.DenseArray.create(tmp + "/array", schema)
-
-    """
-
-    @staticmethod
-    cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        assert(filter_ptr != NULL)
-        cdef ChecksumMD5Filter filter_obj = ChecksumMD5Filter.__new__(ChecksumMD5Filter)
-        filter_obj.ctx = ctx
-        # need to cast away the const
-        filter_obj.ptr = <tiledb_filter_t*> filter_ptr
-        return filter_obj
-
-    def __init__(self, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        super().__init__(TILEDB_FILTER_CHECKSUM_MD5, ctx=ctx)
-
-    def _attrs_(self):
-        return {}
-
-cdef class ChecksumSHA256Filter(Filter):
-    """
-    SHA256 checksum filter.
-
-    **Example:**
-
-    >>> import tiledb, numpy as np, tempfile
-    >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
-    ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
-    ...                      filters=tiledb.FilterList([tiledb.ChecksumSHA256Filter()]))
-    ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
-    ...     tiledb.DenseArray.create(tmp + "/array", schema)
-
-    """
-
-    @staticmethod
-    cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        assert(filter_ptr != NULL)
-        cdef ChecksumSHA256Filter filter_obj = ChecksumSHA256Filter.__new__(ChecksumSHA256Filter)
-        filter_obj.ctx = ctx
-        # need to cast away the const
-        filter_obj.ptr = <tiledb_filter_t*> filter_ptr
-        return filter_obj
-
-    def __init__(self, Ctx ctx=None):
-        if not ctx:
-            ctx = default_ctx()
-        super().__init__(TILEDB_FILTER_CHECKSUM_SHA256, ctx=ctx)
-
-    def _attrs_(self):
-        return {}
-
-cdef Filter _filter_type_ptr_to_filter(Ctx ctx, tiledb_filter_type_t filter_type,
-                                       tiledb_filter_t* filter_ptr):
-    """
-    Return a filter instance for the given type.
-    """
-    if filter_type == TILEDB_FILTER_NONE:
-        return NoOpFilter.from_ptr(filter_ptr, ctx=ctx)
-    elif filter_type == TILEDB_FILTER_GZIP:
-       return GzipFilter.from_ptr(filter_ptr, ctx=ctx)
-    elif filter_type == TILEDB_FILTER_ZSTD:
-        return ZstdFilter.from_ptr(filter_ptr, ctx=ctx)
-    elif filter_type == TILEDB_FILTER_LZ4:
-        return LZ4Filter.from_ptr(filter_ptr, ctx=ctx)
-    elif filter_type == TILEDB_FILTER_RLE:
-        return RleFilter.from_ptr(filter_ptr, ctx=ctx)
-    elif filter_type == TILEDB_FILTER_BZIP2:
-        return Bzip2Filter.from_ptr(filter_ptr, ctx=ctx)
-    elif filter_type == TILEDB_FILTER_DOUBLE_DELTA:
-        return DoubleDeltaFilter.from_ptr(filter_ptr, ctx=ctx)
-    elif filter_type == TILEDB_FILTER_BIT_WIDTH_REDUCTION:
-        return BitWidthReductionFilter.from_ptr(filter_ptr, ctx=ctx)
-    elif filter_type == TILEDB_FILTER_BITSHUFFLE:
-        return BitShuffleFilter.from_ptr(filter_ptr, ctx=ctx)
-    elif filter_type == TILEDB_FILTER_BYTESHUFFLE:
-        return ByteShuffleFilter.from_ptr(filter_ptr, ctx=ctx)
-    elif filter_type == TILEDB_FILTER_POSITIVE_DELTA:
-        return PositiveDeltaFilter.from_ptr(filter_ptr, ctx=ctx)
-    elif filter_type == TILEDB_FILTER_CHECKSUM_MD5:
-        return ChecksumSHA256Filter.from_ptr(filter_ptr, ctx=ctx)
-    elif filter_type == TILEDB_FILTER_CHECKSUM_SHA256:
-        return ChecksumMD5Filter.from_ptr(filter_ptr, ctx=ctx)
-    else:
-        raise ValueError("unknown filter type tag: {:s}".format(filter_type))
+# cdef class Filter(object):
+#     """Base class for all TileDB filters."""
+
+#     def __cinit__(self):
+#         self.ptr = NULL
+
+#     def __dealloc__(self):
+#         if self.ptr != NULL:
+#             tiledb_filter_free(&self.ptr)
+
+#     def __init__(self, tiledb_filter_type_t filter_type, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         cdef tiledb_ctx_t* ctx_ptr = ctx.ptr
+#         cdef tiledb_filter_t* filter_ptr = NULL
+#         cdef int rc = TILEDB_OK
+#         rc = tiledb_filter_alloc(ctx_ptr, filter_type, &filter_ptr)
+#         if rc != TILEDB_OK:
+#             _raise_ctx_err(ctx_ptr, rc)
+#         self.ctx = ctx
+#         self.ptr = filter_ptr
+#         return
+
+#     def __repr__(self):
+#         output = io.StringIO()
+#         output.write(f"{type(self).__name__}(")
+#         if hasattr(self, '_attrs_'):
+#             for f in self._attrs_():
+#                 a = getattr(self, f)
+#                 output.write(f"{f}={a}")
+#         output.write(")")
+#         return output.getvalue()
+
+#     def _repr_html_(self):
+#         output = io.StringIO()
+
+#         output.write("<section>\n")
+#         output.write("<table>\n")
+
+#         output.write("<tr>\n")
+#         output.write("<th></th>\n")
+#         if hasattr(self, '_attrs_'):
+#             for f in self._attrs_():
+#                 output.write(f"<th>{f}</th>")
+#         output.write("</tr>\n")
+
+#         output.write("<tr>\n")
+#         output.write(f"<td>{type(self).__name__}</td>\n")
+#         if hasattr(self, '_attrs_'):
+#             for f in self._attrs_():
+#                 output.write(f"<td>{getattr(self, f)}</td>")
+#         output.write("</tr>\n")
+
+#         output.write("</table>\n")
+#         output.write("</section>\n")
+
+#         return output.getvalue()
+
+#     def __eq__(self, other):
+#         if type(self) != type(other):
+#             return False
+#         for f in self._attrs_():
+#            left = getattr(self, f)
+#            right = getattr(other, f)
+#            if left != right:
+#                return False
+#         return True
+
+# cdef class CompressionFilter(Filter):
+#     """
+#     Base class for filters performing compression.
+
+#     All compression filters support a compression level option, although
+#     some (such as RLE) ignore it.
+
+#     **Example:**
+
+#     >>> import tiledb, numpy as np, tempfile
+#     >>> with tempfile.TemporaryDirectory() as tmp:
+#     ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
+#     ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
+#     ...                      filters=tiledb.FilterList([tiledb.GzipFilter(level=10)]))
+#     ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
+#     ...     tiledb.DenseArray.create(tmp + "/array", schema)
+
+#     """
+
+#     def __init__(self, tiledb_filter_type_t filter_type, level, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         super().__init__(filter_type, ctx)
+#         if level is None:
+#             return
+#         cdef tiledb_ctx_t* ctx_ptr = ctx.ptr
+#         cdef int clevel = int(level)
+#         cdef int rc = TILEDB_OK
+#         rc = tiledb_filter_set_option(ctx_ptr, self.ptr, TILEDB_COMPRESSION_LEVEL, &clevel)
+#         if rc != TILEDB_OK:
+#             _raise_ctx_err(ctx_ptr, rc)
+
+#     @property
+#     def level(self):
+#         """The compression level setting for the filter.
+
+#         Every compressor interprets this value differently (some ignore it, such as RLE).
+
+#         :return: compression level
+#         :rtype: int
+
+#         """
+#         cdef int32_t rc = TILEDB_OK
+#         cdef tiledb_filter_option_t option = TILEDB_COMPRESSION_LEVEL
+#         cdef int32_t level = -1
+
+#         rc = tiledb_filter_get_option(self.ctx.ptr, self.ptr, option, &level)
+#         if rc != TILEDB_OK:
+#             _raise_ctx_err(self.ctx.ptr, rc)
+#         return level
+
+
+# cdef class NoOpFilter(Filter):
+#     """A filter that does nothing."""
+
+#     @staticmethod
+#     cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         assert(filter_ptr != NULL)
+#         cdef NoOpFilter filter_obj = NoOpFilter.__new__(NoOpFilter)
+#         filter_obj.ctx = ctx
+#         # need to cast away the const
+#         filter_obj.ptr = <tiledb_filter_t*> filter_ptr
+#         return filter_obj
+
+#     def __init__(self, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         super().__init__(TILEDB_FILTER_NONE, ctx=ctx)
+
+#     def _attrs_(self):
+#         return {}
+
+# cdef class GzipFilter(CompressionFilter):
+#     """
+#     Filter that compresses using gzip.
+
+#     :param ctx: TileDB Ctx
+#     :type ctx: tiledb.Ctx
+#     :param level: (default None) If not None set the compressor level
+#     :type level: int
+
+#     **Example:**
+
+#     >>> import tiledb, numpy as np, tempfile
+#     >>> with tempfile.TemporaryDirectory() as tmp:
+#     ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
+#     ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
+#     ...                      filters=tiledb.FilterList([tiledb.GzipFilter()]))
+#     ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
+#     ...     tiledb.DenseArray.create(tmp + "/array", schema)
+
+#     """
+
+#     @staticmethod
+#     cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         assert(filter_ptr != NULL)
+#         cdef GzipFilter filter_obj = GzipFilter.__new__(GzipFilter)
+#         filter_obj.ctx = ctx
+#         # need to cast away the const
+#         filter_obj.ptr = <tiledb_filter_t*> filter_ptr
+#         return filter_obj
+
+#     def __init__(self, level=None, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         super().__init__(TILEDB_FILTER_GZIP, level, ctx=ctx)
+
+#     def _attrs_(self):
+#         return {'level': self.level}
+
+# cdef class ZstdFilter(CompressionFilter):
+#     """
+#     Filter that compresses using zstd.
+
+#     :param ctx: TileDB Ctx
+#     :type ctx: tiledb.Ctx
+#     :param level: (default None) If not None set the compressor level
+#     :type level: int
+
+#     **Example:**
+
+#     >>> import tiledb, numpy as np, tempfile
+#     >>> with tempfile.TemporaryDirectory() as tmp:
+#     ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
+#     ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
+#     ...                      filters=tiledb.FilterList([tiledb.ZstdFilter()]))
+#     ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
+#     ...     tiledb.DenseArray.create(tmp + "/array", schema)
+
+#     """
+
+#     @staticmethod
+#     cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         assert(filter_ptr != NULL)
+#         cdef ZstdFilter filter_obj = ZstdFilter.__new__(ZstdFilter)
+#         filter_obj.ctx = ctx
+#         # need to cast away the const
+#         filter_obj.ptr = <tiledb_filter_t*> filter_ptr
+#         return filter_obj
+
+#     def __init__(self, level=None, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         super().__init__(TILEDB_FILTER_ZSTD, level, ctx=ctx)
+
+#     def _attrs_(self):
+#         return {'level': self.level}
+
+# cdef class LZ4Filter(CompressionFilter):
+#     """
+#     Filter that compresses using lz4.
+
+#     :param ctx: TileDB Ctx
+#     :type ctx: tiledb.Ctx
+#     :param level: (default None) If not None set the compressor level
+#     :type level: int
+
+#     **Example:**
+
+#     >>> import tiledb, numpy as np, tempfile
+#     >>> with tempfile.TemporaryDirectory() as tmp:
+#     ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
+#     ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
+#     ...                      filters=tiledb.FilterList([tiledb.LZ4Filter()]))
+#     ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
+#     ...     tiledb.DenseArray.create(tmp + "/array", schema)
+
+#     """
+
+#     @staticmethod
+#     cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         assert(filter_ptr != NULL)
+#         cdef LZ4Filter filter_obj = LZ4Filter.__new__(LZ4Filter)
+#         filter_obj.ctx = ctx
+#         # need to cast away the const
+#         filter_obj.ptr = <tiledb_filter_t*> filter_ptr
+#         return filter_obj
+
+#     def __init__(self, level=None, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         super().__init__(TILEDB_FILTER_LZ4, level, ctx)
+
+#     def _attrs_(self):
+#         return {'level': self.level}
+
+# cdef class Bzip2Filter(CompressionFilter):
+#     """
+#     Filter that compresses using bzip2.
+
+#     :param level: (default None) If not None set the compressor level
+#     :type level: int
+
+#     **Example:**
+
+#     >>> import tiledb, numpy as np, tempfile
+#     >>> with tempfile.TemporaryDirectory() as tmp:
+#     ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
+#     ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
+#     ...                      filters=tiledb.FilterList([tiledb.Bzip2Filter()]))
+#     ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
+#     ...     tiledb.DenseArray.create(tmp + "/array", schema)
+
+#     """
+
+#     @staticmethod
+#     cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         assert(filter_ptr != NULL)
+#         cdef Bzip2Filter filter_obj = Bzip2Filter.__new__(Bzip2Filter)
+#         filter_obj.ctx = ctx
+#         # need to cast away the const
+#         filter_obj.ptr = <tiledb_filter_t*> filter_ptr
+#         return filter_obj
+
+#     def __init__(self, level=None, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         super().__init__(TILEDB_FILTER_BZIP2, level, ctx=ctx)
+
+#     def _attrs_(self):
+#         return {'level': self.level}
+
+# cdef class RleFilter(CompressionFilter):
+#     """
+#     Filter that compresses using run-length encoding (RLE).
+
+#     **Example:**
+
+#     >>> import tiledb, numpy as np, tempfile
+#     >>> with tempfile.TemporaryDirectory() as tmp:
+#     ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
+#     ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
+#     ...                      filters=tiledb.FilterList([tiledb.RleFilter()]))
+#     ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
+#     ...     tiledb.DenseArray.create(tmp + "/array", schema)
+
+#     """
+
+#     @staticmethod
+#     cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         assert(filter_ptr != NULL)
+#         cdef RleFilter filter_obj = RleFilter.__new__(RleFilter)
+#         filter_obj.ctx = ctx
+#         # need to cast away the const
+#         filter_obj.ptr = <tiledb_filter_t*> filter_ptr
+#         return filter_obj
+
+#     def __init__(self, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         super().__init__(TILEDB_FILTER_RLE, None, ctx=ctx)
+
+#     def _attrs_(self):
+#         return {}
+
+# cdef class DoubleDeltaFilter(CompressionFilter):
+#     """
+#     Filter that performs double-delta encoding.
+
+#     **Example:**
+
+#     >>> import tiledb, numpy as np, tempfile
+#     >>> with tempfile.TemporaryDirectory() as tmp:
+#     ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
+#     ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
+#     ...                      filters=tiledb.FilterList([tiledb.DoubleDeltaFilter()]))
+#     ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
+#     ...     tiledb.DenseArray.create(tmp + "/array", schema)
+
+#     """
+
+#     @staticmethod
+#     cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         assert(filter_ptr != NULL)
+#         cdef DoubleDeltaFilter filter_obj = DoubleDeltaFilter.__new__(DoubleDeltaFilter)
+#         filter_obj.ctx = ctx
+#         # need to cast away the const
+#         filter_obj.ptr = <tiledb_filter_t*> filter_ptr
+#         return filter_obj
+
+#     def __init__(self, Ctx ctx=None):
+#         if not ctx:
+#             ctx = None
+#         super().__init__(TILEDB_FILTER_DOUBLE_DELTA, None, ctx)
+
+#     def _attrs_(self):
+#         return {}
+
+# cdef class BitShuffleFilter(Filter):
+#     """
+#     Filter that performs a bit shuffle transformation.
+
+#     **Example:**
+
+#     >>> import tiledb, numpy as np, tempfile
+#     >>> with tempfile.TemporaryDirectory() as tmp:
+#     ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
+#     ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
+#     ...                      filters=tiledb.FilterList([tiledb.BitShuffleFilter()]))
+#     ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
+#     ...     tiledb.DenseArray.create(tmp + "/array", schema)
+
+#     """
+
+#     @staticmethod
+#     cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         assert(filter_ptr != NULL)
+#         cdef BitShuffleFilter filter_obj = BitShuffleFilter.__new__(BitShuffleFilter)
+#         filter_obj.ctx = ctx
+#         # need to cast away the const
+#         filter_obj.ptr = <tiledb_filter_t*> filter_ptr
+#         return filter_obj
+
+#     def __init__(self, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         super().__init__(TILEDB_FILTER_BITSHUFFLE, ctx=ctx)
+
+#     def _attrs_(self):
+#         return {}
+
+# cdef class ByteShuffleFilter(Filter):
+#     """
+#     Filter that performs a byte shuffle transformation.
+
+#     **Example:**
+
+#     >>> import tiledb, numpy as np, tempfile
+#     >>> with tempfile.TemporaryDirectory() as tmp:
+#     ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
+#     ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
+#     ...                      filters=tiledb.FilterList([tiledb.ByteShuffleFilter()]))
+#     ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
+#     ...     tiledb.DenseArray.create(tmp + "/array", schema)
+
+#     """
+
+#     @staticmethod
+#     cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         assert(filter_ptr != NULL)
+#         cdef ByteShuffleFilter filter_obj = ByteShuffleFilter.__new__(ByteShuffleFilter)
+#         filter_obj.ctx = ctx
+#         # need to cast away the const
+#         filter_obj.ptr = <tiledb_filter_t*> filter_ptr
+#         return filter_obj
+
+#     def __init__(self, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         super().__init__(TILEDB_FILTER_BYTESHUFFLE, ctx=ctx)
+
+#     def _attrs_(self):
+#         return {}
+
+# cdef class BitWidthReductionFilter(Filter):
+#     """Filter that performs bit-width reduction.
+
+#      :param ctx: A TileDB Context
+#      :type ctx: tiledb.Ctx
+#      :param window: (default None) max window size for the filter
+#      :type window: int
+
+#     **Example:**
+
+#     >>> import tiledb, numpy as np, tempfile
+#     >>> with tempfile.TemporaryDirectory() as tmp:
+#     ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
+#     ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
+#     ...                      filters=tiledb.FilterList([tiledb.BitWidthReductionFilter()]))
+#     ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
+#     ...     tiledb.DenseArray.create(tmp + "/array", schema)
+
+#     """
+
+#     @staticmethod
+#     cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         assert(filter_ptr != NULL)
+#         cdef BitWidthReductionFilter filter_obj = BitWidthReductionFilter.__new__(BitWidthReductionFilter)
+#         filter_obj.ctx = ctx
+#         # need to cast away the const
+#         filter_obj.ptr = <tiledb_filter_t*> filter_ptr
+#         return filter_obj
+
+#     def __init__(self, window=None, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         super().__init__(TILEDB_FILTER_BIT_WIDTH_REDUCTION, ctx)
+#         if window is None:
+#             return
+#         cdef tiledb_ctx_t* ctx_ptr = ctx.ptr
+#         cdef unsigned int cwindow = window
+#         cdef int rc = TILEDB_OK
+#         rc = tiledb_filter_set_option(ctx_ptr, self.ptr, TILEDB_BIT_WIDTH_MAX_WINDOW, &cwindow)
+#         if rc != TILEDB_OK:
+#             _raise_ctx_err(ctx_ptr, rc)
+
+#     def _attrs_(self):
+#         return {'window': self.window}
+
+#     @property
+#     def window(self):
+#         """
+#         :return: The maximum window size used for the filter
+#         :rtype: int
+
+#         """
+#         cdef tiledb_ctx_t* ctx_ptr = self.ctx.ptr
+#         cdef tiledb_filter_t* filter_ptr = self.ptr
+#         cdef unsigned int cwindow = 0
+#         cdef int rc = TILEDB_OK
+#         rc = tiledb_filter_get_option(ctx_ptr, filter_ptr, TILEDB_BIT_WIDTH_MAX_WINDOW, &cwindow)
+#         if rc != TILEDB_OK:
+#             _raise_ctx_err(ctx_ptr, rc)
+#         return int(cwindow)
+
+
+# cdef class PositiveDeltaFilter(Filter):
+#     """
+#     Filter that performs positive-delta encoding.
+
+#     :param ctx: A TileDB Context
+#     :type ctx: tiledb.Ctx
+#     :param window: (default None) the max window for the filter
+#     :type window: int
+
+#     **Example:**
+
+#     >>> import tiledb, numpy as np, tempfile
+#     >>> with tempfile.TemporaryDirectory() as tmp:
+#     ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
+#     ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
+#     ...                      filters=tiledb.FilterList([tiledb.PositiveDeltaFilter()]))
+#     ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
+#     ...     tiledb.DenseArray.create(tmp + "/array", schema)
+
+#     """
+
+#     @staticmethod
+#     cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         assert(filter_ptr != NULL)
+#         cdef PositiveDeltaFilter filter_obj = PositiveDeltaFilter.__new__(PositiveDeltaFilter)
+#         filter_obj.ctx = ctx
+#         # need to cast away the const
+#         filter_obj.ptr = <tiledb_filter_t*> filter_ptr
+#         return filter_obj
+
+#     def __init__(self, window=None, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         super().__init__(TILEDB_FILTER_POSITIVE_DELTA, ctx=ctx)
+#         if window is None:
+#             return
+#         cdef tiledb_ctx_t* ctx_ptr = ctx.ptr
+#         cdef unsigned int cwindow = window
+#         cdef int rc = TILEDB_OK
+#         rc = tiledb_filter_set_option(ctx_ptr, self.ptr, TILEDB_POSITIVE_DELTA_MAX_WINDOW, &cwindow)
+#         if rc != TILEDB_OK:
+#             _raise_ctx_err(ctx_ptr, rc)
+
+#     def _attrs_(self):
+#         return {'window': self.window}
+
+#     @property
+#     def window(self):
+#         """
+#         :return: The maximum window size used for the filter
+#         :rtype: int
+
+#         """
+#         cdef tiledb_ctx_t* ctx_ptr = self.ctx.ptr
+#         cdef tiledb_filter_t* filter_ptr = self.ptr
+#         cdef unsigned int cwindow = 0
+#         cdef int rc = TILEDB_OK
+#         rc = tiledb_filter_get_option(ctx_ptr, filter_ptr, TILEDB_POSITIVE_DELTA_MAX_WINDOW, &cwindow)
+#         if rc != TILEDB_OK:
+#             _raise_ctx_err(ctx_ptr, rc)
+#         return int(cwindow)
+
+# cdef class ChecksumMD5Filter(Filter):
+#     """
+#     MD5 checksum filter.
+
+#     **Example:**
+
+#     >>> import tiledb, numpy as np, tempfile
+#     >>> with tempfile.TemporaryDirectory() as tmp:
+#     ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
+#     ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
+#     ...                      filters=tiledb.FilterList([tiledb.ChecksumMD5Filter()]))
+#     ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
+#     ...     tiledb.DenseArray.create(tmp + "/array", schema)
+
+#     """
+
+#     @staticmethod
+#     cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         assert(filter_ptr != NULL)
+#         cdef ChecksumMD5Filter filter_obj = ChecksumMD5Filter.__new__(ChecksumMD5Filter)
+#         filter_obj.ctx = ctx
+#         # need to cast away the const
+#         filter_obj.ptr = <tiledb_filter_t*> filter_ptr
+#         return filter_obj
+
+#     def __init__(self, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         super().__init__(TILEDB_FILTER_CHECKSUM_MD5, ctx=ctx)
+
+#     def _attrs_(self):
+#         return {}
+
+# cdef class ChecksumSHA256Filter(Filter):
+#     """
+#     SHA256 checksum filter.
+
+#     **Example:**
+
+#     >>> import tiledb, numpy as np, tempfile
+#     >>> with tempfile.TemporaryDirectory() as tmp:
+#     ...     dom = tiledb.Domain(tiledb.Dim(domain=(0, 9), tile=2, dtype=np.uint64))
+#     ...     a1 = tiledb.Attr(name="a1", dtype=np.int64,
+#     ...                      filters=tiledb.FilterList([tiledb.ChecksumSHA256Filter()]))
+#     ...     schema = tiledb.ArraySchema(domain=dom, attrs=(a1,))
+#     ...     tiledb.DenseArray.create(tmp + "/array", schema)
+
+#     """
+
+#     @staticmethod
+#     cdef from_ptr(const tiledb_filter_t* filter_ptr, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         assert(filter_ptr != NULL)
+#         cdef ChecksumSHA256Filter filter_obj = ChecksumSHA256Filter.__new__(ChecksumSHA256Filter)
+#         filter_obj.ctx = ctx
+#         # need to cast away the const
+#         filter_obj.ptr = <tiledb_filter_t*> filter_ptr
+#         return filter_obj
+
+#     def __init__(self, Ctx ctx=None):
+#         if not ctx:
+#             ctx = default_ctx()
+#         super().__init__(TILEDB_FILTER_CHECKSUM_SHA256, ctx=ctx)
+
+#     def _attrs_(self):
+#         return {}
+
+# cdef Filter _filter_type_ptr_to_filter(Ctx ctx, tiledb_filter_type_t filter_type,
+#                                        tiledb_filter_t* filter_ptr):
+#     """
+#     Return a filter instance for the given type.
+#     """
+#     if filter_type == TILEDB_FILTER_NONE:
+#         return NoOpFilter.from_ptr(filter_ptr, ctx=ctx)
+#     elif filter_type == TILEDB_FILTER_GZIP:
+#        return GzipFilter.from_ptr(filter_ptr, ctx=ctx)
+#     elif filter_type == TILEDB_FILTER_ZSTD:
+#         return ZstdFilter.from_ptr(filter_ptr, ctx=ctx)
+#     elif filter_type == TILEDB_FILTER_LZ4:
+#         return LZ4Filter.from_ptr(filter_ptr, ctx=ctx)
+#     elif filter_type == TILEDB_FILTER_RLE:
+#         return RleFilter.from_ptr(filter_ptr, ctx=ctx)
+#     elif filter_type == TILEDB_FILTER_BZIP2:
+#         return Bzip2Filter.from_ptr(filter_ptr, ctx=ctx)
+#     elif filter_type == TILEDB_FILTER_DOUBLE_DELTA:
+#         return DoubleDeltaFilter.from_ptr(filter_ptr, ctx=ctx)
+#     elif filter_type == TILEDB_FILTER_BIT_WIDTH_REDUCTION:
+#         return BitWidthReductionFilter.from_ptr(filter_ptr, ctx=ctx)
+#     elif filter_type == TILEDB_FILTER_BITSHUFFLE:
+#         return BitShuffleFilter.from_ptr(filter_ptr, ctx=ctx)
+#     elif filter_type == TILEDB_FILTER_BYTESHUFFLE:
+#         return ByteShuffleFilter.from_ptr(filter_ptr, ctx=ctx)
+#     elif filter_type == TILEDB_FILTER_POSITIVE_DELTA:
+#         return PositiveDeltaFilter.from_ptr(filter_ptr, ctx=ctx)
+#     elif filter_type == TILEDB_FILTER_CHECKSUM_MD5:
+#         return ChecksumSHA256Filter.from_ptr(filter_ptr, ctx=ctx)
+#     elif filter_type == TILEDB_FILTER_CHECKSUM_SHA256:
+#         return ChecksumMD5Filter.from_ptr(filter_ptr, ctx=ctx)
+#     else:
+#         raise ValueError("unknown filter type tag: {:s}".format(filter_type))
 
 
 # cdef class FilterList(object):
@@ -2382,7 +2380,7 @@ cdef class Attr(object):
                     raise TypeError("filters argument must be a tiledb.FilterList or iterable of Filters")
                 else:
                     # we want this to raise a specific error if construction fails
-                    filters = FilterList(filters, ctx=self.ctx)
+                    filters = FilterList(filters, ctx=ctx)
             filter_list = filters
 
         # alloc attribute object and set cell num / compressor
@@ -2404,7 +2402,8 @@ cdef class Attr(object):
 
         cdef tiledb_filter_list_t* filter_list_ptr = NULL
         if filters is not None:
-            filter_list_ptr = <tiledb_filter_list_t *>PyCapsule_GetPointer(filter_list.__capsule__, "fl")
+            filter_list_ptr = <tiledb_filter_list_t *>PyCapsule_GetPointer(
+                    filter_list.__capsule__(), "fl")
             rc = tiledb_attribute_set_filter_list(ctx.ptr, attr_ptr, filter_list_ptr)
             if rc != TILEDB_OK:
                 tiledb_attribute_free(&attr_ptr)
@@ -2516,7 +2515,8 @@ cdef class Attr(object):
         check_error(self.ctx,
                     tiledb_attribute_get_filter_list(self.ctx.ptr, self.ptr, &filter_list_ptr))
 
-        return FilterList(PyCapsule_New(filter_list_ptr, "fl", NULL), ctx=self.ctx)
+        return FilterList(PyCapsule_New(filter_list_ptr, "fl", NULL), 
+            is_capsule=True, ctx=self.ctx)
 
     @property
     def fill(self):
@@ -2767,11 +2767,11 @@ cdef class Dim(object):
             assert dim_ptr != NULL, "internal error: tiledb_dimension_alloc null dim_ptr"
 
             if filters is not None:
-                if not isinstance(filters, FilterList):
-                    filter_list = FilterList(filters,
-                        ctx=Context(ctx.__capsule__(), False))
                 filter_list = filters
-                filter_list_ptr = <tiledb_filter_list_t *>PyCapsule_GetPointer(filter_list.__capsule__, "fl")
+                if not isinstance(filters, FilterList):
+                    filter_list = FilterList(filters, ctx=ctx)
+                filter_list_ptr = <tiledb_filter_list_t *>PyCapsule_GetPointer(
+                        filter_list.__capsule__(), "fl")
                 check_error(ctx,
                     tiledb_dimension_set_filter_list(ctx.ptr, dim_ptr, filter_list_ptr))
         except:
@@ -2914,7 +2914,8 @@ cdef class Dim(object):
         check_error(self.ctx,
                     tiledb_dimension_get_filter_list(self.ctx.ptr, self.ptr, &filter_list_ptr))
 
-        return FilterList(PyCapsule_New(filter_list_ptr, "fl", NULL), ctx=self.ctx)
+        return FilterList(PyCapsule_New(filter_list_ptr, "fl", NULL), 
+            is_capsule=True, ctx=self.ctx)
 
     cdef unsigned int _cell_val_num(Dim self) except? 0:
         cdef unsigned int ncells = 0
@@ -3556,26 +3557,26 @@ cdef class ArraySchema(object):
         try:
             if offsets_filters is not None:
                 if not isinstance(offsets_filters, FilterList):
-                    offsets_filters = FilterList(offsets_filters, 
-                        ctx=Context(ctx.__capsule__(), False))
+                    offsets_filters = FilterList(offsets_filters, ctx=ctx)
                 filter_list = offsets_filters
-                filter_list_ptr = <tiledb_filter_list_t *>PyCapsule_GetPointer(filter_list.__capsule__, "fl")
+                filter_list_ptr = <tiledb_filter_list_t *>PyCapsule_GetPointer(
+                        filter_list.__capsule__(), "fl")
                 check_error(ctx,
                     tiledb_array_schema_set_offsets_filter_list(ctx.ptr, schema_ptr, filter_list_ptr))
             if coords_filters is not None:
                 if not isinstance(coords_filters, FilterList):
-                    coords_filters = FilterList(coords_filters, 
-                        ctx=Context(ctx.__capsule__(), False))
+                    coords_filters = FilterList(coords_filters, ctx=ctx)
                 filter_list = coords_filters
-                filter_list_ptr = <tiledb_filter_list_t *>PyCapsule_GetPointer(filter_list.__capsule__, "fl")
+                filter_list_ptr = <tiledb_filter_list_t *>PyCapsule_GetPointer(
+                        filter_list.__capsule__(), "fl")
                 check_error(ctx,
                     tiledb_array_schema_set_coords_filter_list(ctx.ptr, schema_ptr, filter_list_ptr))
             if validity_filters is not None:
                 if not isinstance(validity_filters, FilterList):
-                    validity_filters = FilterList(validity_filters, 
-                        ctx=Context(ctx.__capsule__(), False))
+                    validity_filters = FilterList(validity_filters, ctx=ctx)
                 filter_list = validity_filters
-                filter_list_ptr = <tiledb_filter_list_t *>PyCapsule_GetPointer(filter_list.__capsule__, "fl")
+                filter_list_ptr = <tiledb_filter_list_t *>PyCapsule_GetPointer(
+                        filter_list.__capsule__(), "fl")
                 check_error(ctx,
                     tiledb_array_schema_set_validity_filter_list(ctx.ptr, schema_ptr, filter_list_ptr))
         except:
@@ -3799,7 +3800,9 @@ cdef class ArraySchema(object):
         check_error(self.ctx,
             tiledb_array_schema_get_offsets_filter_list(
                 self.ctx.ptr, self.ptr, &filter_list_ptr))
-        return FilterList(self.ctx, PyCapsule_New(filter_list_ptr, "fl", NULL))
+        return FilterList(
+            PyCapsule_New(filter_list_ptr, "fl", NULL), 
+                is_capsule=True, ctx=self.ctx)
 
     @property
     def coords_filters(self):
@@ -3812,7 +3815,9 @@ cdef class ArraySchema(object):
         check_error(self.ctx,
             tiledb_array_schema_get_coords_filter_list(
                 self.ctx.ptr, self.ptr, &filter_list_ptr))
-        return FilterList(self.ctx, PyCapsule_New(filter_list_ptr, "fl", NULL))
+        return FilterList(
+            PyCapsule_New(filter_list_ptr, "fl", NULL), 
+                is_capsule=True, ctx=self.ctx)
     
     @property
     def validity_filters(self):
@@ -3825,7 +3830,9 @@ cdef class ArraySchema(object):
         check_error(self.ctx,
             tiledb_array_schema_get_validity_filter_list(
                 self.ctx.ptr, self.ptr, &validity_list_ptr))
-        return FilterList(Pyself.ctx, Capsule_New(validity_list_ptr, "fl", NULL))
+        return FilterList(
+            PyCapsule_New(validity_list_ptr, "fl", NULL), 
+                is_capsule=True, ctx=self.ctx)
 
     @property
     def domain(self):

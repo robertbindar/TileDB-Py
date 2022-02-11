@@ -32,22 +32,9 @@ except:
         # Otherwise try loading by name only.
         ctypes.CDLL(lib_name)
 
-from .filter import FilterList
-
-from .ctx import default_ctx, scope_ctx
-from .libtiledb import (
-    Array,
-    Ctx,
-    Config,
-    Dim,
-    Domain,
-    Attr,
-    ArraySchema,
-    TileDBError,
-    VFS,
-    FileIO,
+from .filter import (
     Filter,
-    #FilterList,
+    FilterList,
     NoOpFilter,
     GzipFilter,
     ZstdFilter,
@@ -61,6 +48,35 @@ from .libtiledb import (
     PositiveDeltaFilter,
     ChecksumMD5Filter,
     ChecksumSHA256Filter,
+)
+
+from .ctx import default_ctx, scope_ctx
+from .libtiledb import (
+    Array,
+    Ctx,
+    Config,
+    Dim,
+    Domain,
+    Attr,
+    ArraySchema,
+    TileDBError,
+    VFS,
+    FileIO,
+    # Filter,
+    # FilterList,
+    # NoOpFilter,
+    # GzipFilter,
+    # ZstdFilter,
+    # LZ4Filter,
+    # Bzip2Filter,
+    # RleFilter,
+    # DoubleDeltaFilter,
+    # BitShuffleFilter,
+    # ByteShuffleFilter,
+    # BitWidthReductionFilter,
+    # PositiveDeltaFilter,
+    # ChecksumMD5Filter,
+    # ChecksumSHA256Filter,
     consolidate,
     group_create,
     object_type,
